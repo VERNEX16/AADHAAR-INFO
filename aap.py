@@ -7,7 +7,7 @@ import string
 
 app = Flask(__name__)
 
-BASE_URL = "https://aadhar-to-ration-api-abhaysingh.vercel.app//api/family?id="
+BASE_URL = "https://aadhar-to-ration-api-abhaysingh.vercel.app/api/family"
 
 # ---------------- DATABASE ----------------
 def init_db():
@@ -28,10 +28,7 @@ init_db()
 def generate_key(duration):
     key = "VERNEX-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
 
-    if duration == "lifetime":
-        expiry = 9999999999
-    else:
-        expiry = time.time() + duration
+    expiry = 9999999999 if duration == "lifetime" else time.time() + duration
 
     conn = sqlite3.connect("keys.db")
     c = conn.cursor()
@@ -64,7 +61,7 @@ DURATIONS = {
     "lifetime": "lifetime"
 }
 
-# ---------------- CLEAN FUNCTION ----------------
+# ---------------- CLEAN FUNCTION (UPDATED) ----------------
 def clean_data(data):
     remove_keys = [
         "branding",
@@ -74,11 +71,21 @@ def clean_data(data):
     ]
 
     if isinstance(data, dict):
-        return {
-            k: clean_data(v)
-            for k, v in data.items()
-            if k not in remove_keys
-        }
+        cleaned = {}
+        for k, v in data.items():
+
+            # ❌ remove unwanted keys
+            if k in remove_keys:
+                continue
+
+            # ❌ remove any value containing "Abhay Singh"
+            if isinstance(v, str) and "Abhay Singh" in v:
+                continue
+
+            cleaned[k] = clean_data(v)
+
+        return cleaned
+
     elif isinstance(data, list):
         return [clean_data(i) for i in data]
 
@@ -108,24 +115,17 @@ def generate():
 # 📞 Main API
 @app.route("/api/numinfo")
 def numinfo():
-    num = request.args.get("num")
+    user_id = request.args.get("id")
     key = request.args.get("key")
 
     if not is_valid(key):
         return jsonify({"error": "Invalid or expired key"})
 
     try:
-        res = requests.get(BASE_URL, params={
-            "num": num,
-            "key": "701984830542"
-        }, timeout=10)
-
+        res = requests.get(BASE_URL, params={"id": user_id}, timeout=10)
         raw_data = res.json()
 
-        # 🧹 Clean unwanted fields
         data = clean_data(raw_data)
-
-        # ✅ Add your branding
         data["owner"] = "VERNEX API"
 
         return jsonify(data)
