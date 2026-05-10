@@ -1,153 +1,210 @@
 from flask import Flask, request, jsonify
-import requests
-import sqlite3
+import json
 import time
 import random
 import string
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 
-# =========================
-# EXTERNAL API
-# =========================
-BASE_URL = "https://aadhar-to-ration-api-abhaysingh.vercel.app/api/family"
+KEYS_FILE = "keys.json"
 
 # =========================
-# DATABASE SETUP
+# CREATE DATABASE
 # =========================
-def init_db():
-    conn = sqlite3.connect("keys.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute("""
-        CREATE TABLE IF NOT EXISTS keys (
-            key TEXT PRIMARY KEY,
-            expiry REAL
+if not os.path.exists(KEYS_FILE):
+    with open(KEYS_FILE, "w") as f:
+        json.dump({}, f)
+
+# =========================
+# LOAD KEYS
+# =========================
+def load_keys():
+    try:
+        with open(KEYS_FILE, "r") as f:
+            return json.load(f)
+    except:
+        return {}
+
+# =========================
+# SAVE KEYS
+# =========================
+def save_keys(data):
+    with open(KEYS_FILE, "w") as f:
+        json.dump(data, f, indent=4)
+
+# =========================
+# GENERATE KEY
+# =========================
+def generate_key():
+    return "VERNEX-" + ''.join(
+        random.choices(
+            string.ascii_uppercase + string.digits,
+            k=12
         )
-    """)
-    conn.commit()
-    conn.close()
-
-init_db()
+    )
 
 # =========================
-# KEY GENERATOR
+# FORMAT DATE
 # =========================
-def generate_key(duration):
-    key = "VERNEX-" + ''.join(random.choices(string.ascii_uppercase + string.digits, k=12))
-    expiry = 9999999999 if duration == "lifetime" else time.time() + duration
-
-    conn = sqlite3.connect("keys.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute("INSERT INTO keys VALUES (?, ?)", (key, expiry))
-    conn.commit()
-    conn.close()
-
-    return key, expiry
+def format_time(ts):
+    return datetime.fromtimestamp(ts).strftime(
+        "%d-%m-%Y %I:%M:%S %p"
+    )
 
 # =========================
-# KEY CHECK
-# =========================
-def is_valid(key):
-    conn = sqlite3.connect("keys.db", check_same_thread=False)
-    c = conn.cursor()
-    c.execute("SELECT expiry FROM keys WHERE key=?", (key,))
-    row = c.fetchone()
-    conn.close()
-
-    if not row:
-        return False
-
-    return time.time() < row[0]
-
-# =========================
-# PLANS
-# =========================
-DURATIONS = {
-    "1d": 86400,
-    "2d": 172800,
-    "3d": 259200,
-    "7d": 604800,
-    "30d": 2592000,
-    "60d": 5184000,
-    "lifetime": "lifetime"
-}
-
-# =========================
-# CLEAN DATA
-# =========================
-def clean_data(data):
-    remove_keys = ["developer", "branding", "processed_by"]
-
-    if isinstance(data, dict):
-        return {
-            k: clean_data(v)
-            for k, v in data.items()
-            if k not in remove_keys and "Abhay Singh" not in str(v)
-        }
-
-    if isinstance(data, list):
-        return [clean_data(i) for i in data]
-
-    return data
-
-# =========================
-# HOME ROUTE
+# HOME
 # =========================
 @app.route("/")
 def home():
-    return "VERNEX API LIVE 🚀"
+    return jsonify({
+        "owner": "VERNEX",
+        "status": "RUNNING",
+        "message": "VERNEX VEHICLE API ACTIVE"
+    })
 
 # =========================
 # GENERATE KEY
 # =========================
 @app.route("/generate")
 def generate():
-    plan = request.args.get("plan", "1d")
 
-    if plan not in DURATIONS:
-        return jsonify({"error": "Invalid plan"})
+    days = request.args.get("days")
 
-    key, expiry = generate_key(DURATIONS[plan])
+    if not days:
+        return jsonify({
+            "success": False,
+            "error": "Missing days"
+        }), 400
+
+    try:
+        days = int(days)
+    except:
+        return jsonify({
+            "success": False,
+            "error": "Invalid days"
+        }), 400
+
+    if days <= 0:
+        return jsonify({
+            "success": False,
+            "error": "Days must be greater than 0"
+        }), 400
+
+    current_time = int(time.time())
+
+    # REAL EXPIRY
+    expires_at = current_time + (days * 86400)
+
+    api_key = generate_key()
+
+    keys = load_keys()
+
+    keys[api_key] = {
+        "created_at": current_time,
+        "expires_at": expires_at,
+        "days": days
+    }
+
+    save_keys(keys)
 
     return jsonify({
-        "key": key,
-        "plan": plan,
-        "expires_at": expiry
+        "owner": "VERNEX",
+        "success": True,
+        "key": api_key,
+        "validity_days": days,
+        "created_at": format_time(current_time),
+        "expires_at": format_time(expires_at)
     })
 
 # =========================
-# MAIN API
+# VALIDATE KEY
 # =========================
-@app.route("/api/numinfo")
-def numinfo():
-    user_id = request.args.get("id")
-    key = request.args.get("key")
+def validate_key(api_key):
 
-    if not is_valid(key):
-        return jsonify({"error": "Invalid or expired key"})
+    keys = load_keys()
 
-    try:
-        res = requests.get(
-            BASE_URL,
-            params={"id": user_id},
-            timeout=15
-        )
+    if api_key not in keys:
+        return False, {
+            "success": False,
+            "error": "Invalid API key"
+        }
 
-        data = clean_data(res.json())
-        data["owner"] = "VERNEX API"
+    key_data = keys[api_key]
 
-        return jsonify(data)
+    current_time = int(time.time())
 
-    except Exception as e:
+    expires_at = key_data["expires_at"]
+
+    # EXPIRED
+    if current_time >= expires_at:
+
+        del keys[api_key]
+        save_keys(keys)
+
+        return False, {
+            "success": False,
+            "error": "API key expired",
+            "expired_at": format_time(expires_at)
+        }
+
+    return True, key_data
+
+# =========================
+# DEMO VEHICLE API
+# =========================
+@app.route("/api/vehicle")
+def vehicle():
+
+    rc = request.args.get("rc")
+    api_key = request.args.get("key")
+
+    if not rc:
         return jsonify({
-            "error": "API failed",
-            "details": str(e)
-        })
+            "success": False,
+            "error": "Missing vehicle number"
+        }), 400
+
+    if not api_key:
+        return jsonify({
+            "success": False,
+            "error": "Missing API key"
+        }), 401
+
+    valid, data = validate_key(api_key)
+
+    if not valid:
+        return jsonify(data), 403
+
+    # SAFE SAMPLE DATA
+    vehicle_data = {
+        "vehicle_number": rc.upper(),
+        "vehicle_type": "Car",
+        "brand": "Hyundai",
+        "model": "i20",
+        "fuel_type": "Petrol",
+        "registration_year": "2022",
+        "insurance_status": "Active"
+    }
+
+    return jsonify({
+        "owner": "VERNEX",
+        "success": True,
+        "api_key": {
+            "valid": True,
+            "expires_at": format_time(
+                data["expires_at"]
+            )
+        },
+        "result": vehicle_data
+    })
 
 # =========================
-# RUN (RENDER FIX)
+# RUN
 # =========================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(
+        host="0.0.0.0",
+        port=5000
+        )
