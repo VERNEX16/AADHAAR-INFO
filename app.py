@@ -45,7 +45,7 @@ def validate_key(api_key):
 
     return True
 
-# Home
+# Home Route
 @app.route("/")
 def home():
 
@@ -144,4 +144,5 @@ def vehicle_lookup():
             "error": str(e)
         })
 
-app = app
+if __name__ == "__main__":
+    app.run(debug=True)
