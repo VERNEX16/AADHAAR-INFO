@@ -9,7 +9,7 @@ app = Flask(__name__)
 
 KEYS_FILE = "keys.json"
 
-# Create keys.json
+# Create keys file
 if not os.path.exists(KEYS_FILE):
     with open(KEYS_FILE, "w") as f:
         json.dump({}, f)
@@ -24,7 +24,7 @@ def save_keys(data):
     with open(KEYS_FILE, "w") as f:
         json.dump(data, f, indent=4)
 
-# Validate Key
+# Validate key
 def validate_key(api_key):
 
     keys = load_keys()
@@ -45,7 +45,7 @@ def validate_key(api_key):
 
     return True
 
-# Home Route
+# Home
 @app.route("/")
 def home():
 
@@ -121,7 +121,7 @@ def vehicle_lookup():
 
         data = response.json()
 
-        # Remove branding
+        # Remove unwanted fields
         if isinstance(data, dict):
 
             data.pop("by", None)
@@ -144,5 +144,4 @@ def vehicle_lookup():
             "error": str(e)
         })
 
-# Vercel Entry
 app = app
